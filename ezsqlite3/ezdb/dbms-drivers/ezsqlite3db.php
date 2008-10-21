@@ -19,7 +19,7 @@ class eZSQLite3DB extends eZDBInterface
             return;
         }
 
-        if ( $this->DBConnection === false )
+        if ( $this->DBConnection === false && $this->DB !== '' )
         {
             $this->DBConnection = $this->connect( $this->DB );
         }
@@ -36,8 +36,6 @@ class eZSQLite3DB extends eZDBInterface
     */
     private function connect( $fileName )
     {
-        //$fileName = 'random';
-        /*$fileName = ':memory:';*/
         $connection = false;
         $error = 0;
 
@@ -237,14 +235,30 @@ class eZSQLite3DB extends eZDBInterface
                 return false;
             }
 
-            $transformedResult = array();
-
             $i = 0;
-
             while ( $row = $results->fetchArray( SQLITE3_ASSOC ) )
             {
                 eZDebug::accumulatorStart( 'sqlite3_loop', 'sqlite3_total', 'Looping result' );
-                $retArray[$i + $offset] = is_string( $column ) ? $row[$column] : $row;
+
+                // SQLite sometimes gives back column names prefixed with the table name
+                // we need to transform the row so that there are no table names
+                $transformedRow = array();
+                foreach ( $row as $identifier => $value )
+                {
+                    if ( strpos( $identifier, '.' ) !== false )
+                    {
+                        $parts = explode( '.', $identifier );
+                        $newIdentifier = array_pop( $parts );
+                    }
+                    else
+                    {
+                        $newIdentifier = $identifier;
+                    }
+
+                    $transformedRow[$newIdentifier] = $value;
+                }
+
+                $retArray[$i + $offset] = is_string( $column ) ? $transformedRow[$column] : $transformedRow;
                 $i++;
                 eZDebug::accumulatorStop( 'sqlite3_loop' );
             }
@@ -363,7 +377,14 @@ class eZSQLite3DB extends eZDBInterface
     */
     function escapeString( $str )
     {
-        return $this->DBConnection->escapeString( $str );
+        if ( $this->IsConnected )
+        {
+            return $this->DBConnection->escapeString( $str );
+        }
+        else
+        {
+            return $str;
+        }
     }
 
     /*!
@@ -376,6 +397,11 @@ class eZSQLite3DB extends eZDBInterface
             $this->DBConnection->close();
             $this->IsConnected = false;
         }
+    }
+
+    function __destruct()
+    {
+        $this->close();
     }
 
     /*!
@@ -403,7 +429,24 @@ class eZSQLite3DB extends eZDBInterface
     */
     function availableDatabases()
     {
-        // useless in the contect of SQLite
+        $returnFiles = array();
+        if ( $handle = @opendir( 'var/storage/sqlite3' ) )
+        {
+            while ( ( $file = readdir( $handle ) ) !== false )
+            {
+                if ( ( $file == "." ) || ( $file == ".." ) )
+                {
+                    continue;
+                }
+
+                if ( is_file( 'var/storage/sqlite3/' . $file ) )
+                {
+                    $returnFiles[] = $file;
+                }
+            }
+            @closedir( $handle );
+        }
+        return $returnFiles;
     }
 
     /*!
